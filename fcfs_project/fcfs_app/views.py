@@ -1,55 +1,57 @@
+from django.views import View
 from django.http import JsonResponse
 import threading
 import logging
+import time
+from django.http import HttpResponse
 
-def get_llm_api_key():
-    return "YOUR_API_KEY"
+def index_view(request):
+    return HttpResponse("Welcome to the FCFS app!")
 
-request_queue = []
-MAX_PARALLEL_REQUESTS = 3
-lock = threading.Lock()
-ongoing_requests = 0
+class FcfsHandler(View):
+    def __init__(self, max_allowed=3):
+        self.max_allowed = max_allowed
+        self.request_queue = []
+        self.lock = threading.Lock()
+        self.ongoing_requests = 0
+        self.logger = logging.getLogger(__name__)
+        super().__init__()
 
-# Function to make a request to the LLM
-def make_llm_request(prompt, api_key):
-    # Implement logic 
-    pass
+    def make_llm_request(self, prompt, api_key):
+        time.sleep(5)  
+        return {'response': f'Response to: {prompt}'}
 
-logger = logging.getLogger(__name__)
+    def get_llm_api_key(self):
+        return "YOUR_API_KEY"
 
-def process_request(prompt):
-    global ongoing_requests
-    api_key = get_llm_api_key()
+    def process_request(self, prompt):
+        api_key = self.get_llm_api_key()
 
-    # Make a request to the LLM
-    response = make_llm_request(prompt, api_key)
-    logger.debug(f'Response from LLM: {response}')
-    with lock:
-        ongoing_requests -= 1
-    return response
+        # Make a request to the LLM
+        response = self.make_llm_request(prompt, api_key)
+        self.logger.debug(f'Response from LLM: {response}')
+        return response
 
-def process_view(request):
-    global ongoing_requests
-    with lock:
-        if ongoing_requests >= MAX_PARALLEL_REQUESTS:
-            return JsonResponse({'message': 'Request added to the queue'}, safe=False)
+    def get(self, request):
         prompt = request.GET.get('prompt', '')
-        ongoing_requests += 1
-    response_data = process_request(prompt)
-    with lock:
-        ongoing_requests -= 1
-    return JsonResponse(response_data, safe=False)
+        response_data = self.process(prompt)
+        return JsonResponse(response_data, safe=False)
 
-def check_pending_requests():
-    global ongoing_requests
-    while True:
-        if request_queue and ongoing_requests < MAX_PARALLEL_REQUESTS:
-            prompt = request_queue.pop(0)
-            response_data = process_request(prompt)
-            with lock:
-                ongoing_requests -= 1
+    def process(self, prompt):
+        with self.lock:
+            if self.ongoing_requests >= self.max_allowed:
+                self.request_queue.append(prompt)
+                return {'message': 'Request added to the queue'}
 
-            # Send the response
-            JsonResponse(response_data)
+            self.ongoing_requests += 1
 
-threading.Thread(target=check_pending_requests, daemon=True).start()
+        # Process the request
+        response_data = self.process_request(prompt)
+
+        with self.lock:
+            self.ongoing_requests -= 1
+            if self.request_queue:
+                next_prompt = self.request_queue.pop(0)
+                threading.Thread(target=self.process, args=(next_prompt,)).start()
+
+        return response_data
